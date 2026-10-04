@@ -91,6 +91,7 @@ public class MoneyMoneyManager: ObservableObject {
     private let logger = Logger(subsystem: "com.piofresco.mmsync", category: "MoneyMoneyManager")
     private var engine: SyncEngine
     private var pollTimer: Timer?
+    private var retryPending = false
 
     @Published public private(set) var syncStatus: SyncStatus = .idle
     @Published public private(set) var isSyncing = false
@@ -333,6 +334,15 @@ public class MoneyMoneyManager: ObservableObject {
             // Once per occurrence; the flag resets after the next successful sync.
             if !needsFullDiskAccess { promptForFullDiskAccess() }
             needsFullDiskAccess = true
+        }
+        if case .iCloudNotReady = error as? SyncError, !retryPending {
+            // Downloads usually land within seconds; don't wait for the next poll.
+            retryPending = true
+            Task {
+                try? await Task.sleep(for: .seconds(30))
+                retryPending = false
+                await syncIfMoneyMoneyClosed()
+            }
         }
 
         // The poll timer retries every few minutes; only notify when the problem changes.

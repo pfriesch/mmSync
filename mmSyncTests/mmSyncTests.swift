@@ -53,6 +53,31 @@ struct SyncEngineTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: a.backupsURL.path).count == 1)
     }
 
+    /// MoneyMoney's folder has a custom icon (`Icon\r`), which iCloud Drive never delivers to the other Mac.
+    @Test func finderIconFileDoesNotBlockPull() throws {
+        let a = mac("A"), b = mac("B")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+
+        try write("v1", to: a)
+        try Data().write(to: a.localDatabase.appending(path: "Icon\r"))
+        #expect(try a.sync() == .pushed)
+
+        // Simulate iCloud: the icon file never arrives, and an older manifest still lists it.
+        let remote = root.appending(path: "iCloud/current")
+        try? fm.removeItem(at: remote.appending(path: "Database/Icon\r"))
+        let manifestURL = remote.appending(path: "manifest.json")
+        var json = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any])
+        var files = try #require(json["files"] as? [String: String])
+        files["Icon\r"] = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        json["files"] = files
+        try JSONSerialization.data(withJSONObject: json).write(to: manifestURL)
+
+        #expect(try b.sync() == .pulled)
+        #expect(try read(b) == "v1")
+        #expect(try b.sync() == .upToDate)
+    }
+
     @Test func conflictKeepsBothUntilResolved() throws {
         let a = mac("A"), b = mac("B")
         defer { try? FileManager.default.removeItem(at: root) }

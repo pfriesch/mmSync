@@ -8,6 +8,10 @@ struct Manifest: Codable, Equatable {
     var date: Date
     var moneyMoneyVersion: String?
     var files: [String: String] // relative path → SHA-256
+
+    var syncedFiles: [String: String] {
+        files.filter { !SyncEngine.isFinderMetadata($0.key) }
+    }
 }
 
 /// Marks that MoneyMoney is open on some Mac. Advisory only: iCloud delivers it with delay.
@@ -97,7 +101,7 @@ struct SyncEngine {
         let remote = try remoteManifest()
 
         // An empty local folder (fresh Mac) never counts as a change worth keeping.
-        let localChanged = !local.isEmpty && local != last?.files
+        let localChanged = !local.isEmpty && local != last?.syncedFiles
         let remoteChanged = remote != nil && remote?.id != last?.id
 
         switch (localChanged, remoteChanged) {
@@ -110,7 +114,7 @@ struct SyncEngine {
             try pull(remote!)
             return .pulled
         case (true, true):
-            if local == remote!.files {
+            if local == remote!.syncedFiles {
                 try write(remote!, to: lastSyncedURL)
                 return .upToDate
             }
@@ -159,7 +163,11 @@ struct SyncEngine {
 
     private func pull(_ remote: Manifest) throws {
         // iCloud may deliver the manifest before the files; hashes catch that.
-        guard try hashes(of: remoteDatabase) == remote.files else {
+        guard try hashes(of: remoteDatabase) == remote.syncedFiles else {
+            // Ask iCloud to fetch anything evicted or pending; the caller retries.
+            for name in remote.syncedFiles.keys {
+                try? fm.startDownloadingUbiquitousItem(at: remoteDatabase.appending(path: name))
+            }
             throw SyncError.iCloudNotReady
         }
         let parent = localDatabase.deletingLastPathComponent()
@@ -167,7 +175,7 @@ struct SyncEngine {
         try fm.createDirectory(at: parent, withIntermediateDirectories: true)
         try? fm.removeItem(at: tmp)
         try fm.copyItem(at: remoteDatabase, to: tmp)
-        guard try hashes(of: tmp) == remote.files else {
+        guard try hashes(of: tmp) == remote.syncedFiles else {
             try? fm.removeItem(at: tmp)
             throw SyncError.iCloudNotReady
         }
@@ -207,6 +215,13 @@ struct SyncEngine {
         }
     }
 
+    /// Finder's `.DS_Store` and custom-icon `Icon\r` files. iCloud Drive doesn't sync `Icon\r`,
+    /// so hashing it would make the other Mac wait for it forever.
+    static func isFinderMetadata(_ relativePath: String) -> Bool {
+        let name = (relativePath as NSString).lastPathComponent
+        return name == ".DS_Store" || name == "Icon\r"
+    }
+
     /// SHA-256 of every regular file below `folder`, keyed by relative path. Missing folder → empty.
     func hashes(of folder: URL) throws -> [String: String] {
         guard fm.fileExists(atPath: folder.path) else { return [:] }
@@ -217,7 +232,7 @@ struct SyncEngine {
         let enumerator = fm.enumerator(atPath: folder.path)
         while let relative = enumerator?.nextObject() as? String {
             guard enumerator?.fileAttributes?[.type] as? FileAttributeType == .typeRegular,
-                  !relative.hasSuffix(".DS_Store") else { continue }
+                  !Self.isFinderMetadata(relative) else { continue }
             let handle = try FileHandle(forReadingFrom: folder.appending(path: relative))
             defer { try? handle.close() }
             var hasher = SHA256()
