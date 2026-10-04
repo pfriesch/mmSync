@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		33C07FCD2DE8C06F00DF1445 /* mmSync in Sources */ = {isa = PBXBuildFile; fileRef = 33C07FCC2DE8C06F00DF1445 /* mmSync */; };
 		3AC0FFEE0000000000000001 /* MoneyMoneyMCP in Frameworks */ = {isa = PBXBuildFile; productRef = 3AC0FFEE0000000000000003 /* MoneyMoneyMCP */; };
 /* End PBXBuildFile section */
 
@@ -34,9 +33,22 @@
 		33C07FE72DE8C07200DF1445 /* mmSyncUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = mmSyncUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		3AC0FFEE0000000000000004 /* Exceptions for "mmSync" folder in "mmSync" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 33C07FC92DE8C06F00DF1445 /* mmSync */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		33C07FCC2DE8C06F00DF1445 /* mmSync */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				3AC0FFEE0000000000000004 /* Exceptions for "mmSync" folder in "mmSync" target */,
+			);
 			path = mmSync;
 			sourceTree = "<group>";
 		};
@@ -246,7 +258,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				33C07FCD2DE8C06F00DF1445 /* mmSync in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -425,7 +436,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = de.pfriesch.mmSync;
+				PRODUCT_BUNDLE_IDENTIFIER = com.piofresco.mmsync;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -454,7 +465,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = de.pfriesch.mmSync;
+				PRODUCT_BUNDLE_IDENTIFIER = com.piofresco.mmsync;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;

@@ -220,7 +220,7 @@ public class MoneyMoneyManager: ObservableObject {
             // Keep the lock held, e.g. after mmSync restarted while MoneyMoney was open.
             checkICloudAvailability()
             if isICloudAvailable {
-                try? engine.acquireLock()
+                _ = try? engine.acquireLock()
             }
         } else {
             await startSync()
