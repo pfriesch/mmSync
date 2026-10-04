@@ -243,14 +243,16 @@ public class MoneyMoneyManager: ObservableObject {
         await run { try $0.forcePush() }
     }
 
+    /// macOS never lists apps under Full Disk Access by itself, so also reveal mmSync.app for dragging into the list.
     public func openFullDiskAccessSettings() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!)
+        NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
     }
 
     private func promptForFullDiskAccess() {
         let alert = NSAlert()
         alert.messageText = "mmSync needs Full Disk Access"
-        alert.informativeText = "macOS blocks access to MoneyMoney's data. Add mmSync under Privacy & Security → Full Disk Access, then restart mmSync."
+        alert.informativeText = "macOS blocks access to MoneyMoney's data. In Privacy & Security → Full Disk Access, click + and choose mmSync (or drag it in from the Finder window that opens), turn it on, then restart mmSync."
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Later")
         NSApp.activate(ignoringOtherApps: true)
