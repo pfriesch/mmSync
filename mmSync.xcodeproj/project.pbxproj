@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		33C07FCD2DE8C06F00DF1445 /* mmSync in Sources */ = {isa = PBXBuildFile; fileRef = 33C07FCC2DE8C06F00DF1445 /* mmSync */; };
+		3AC0FFEE0000000000000001 /* MoneyMoneyMCP in Frameworks */ = {isa = PBXBuildFile; productRef = 3AC0FFEE0000000000000003 /* MoneyMoneyMCP */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,6 +57,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3AC0FFEE0000000000000001 /* MoneyMoneyMCP in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -116,6 +118,7 @@
 			);
 			name = mmSync;
 			packageProductDependencies = (
+				3AC0FFEE0000000000000003 /* MoneyMoneyMCP */,
 			);
 			productName = mmSync;
 			productReference = 33C07FCA2DE8C06F00DF1445 /* mmSync.app */;
@@ -198,6 +201,9 @@
 				Base,
 			);
 			mainGroup = 33C07FC12DE8C06F00DF1445;
+			packageReferences = (
+				3AC0FFEE0000000000000002 /* XCLocalSwiftPackageReference "mmSyncMCP" */,
+			);
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 33C07FCB2DE8C06F00DF1445 /* Products */;
@@ -563,6 +569,20 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		3AC0FFEE0000000000000002 /* XCLocalSwiftPackageReference "mmSyncMCP" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = mmSyncMCP;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		3AC0FFEE0000000000000003 /* MoneyMoneyMCP */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MoneyMoneyMCP;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 33C07FC22DE8C06F00DF1445 /* Project object */;
 }

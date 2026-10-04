@@ -8,8 +8,20 @@
 import SwiftUI
 import SwiftData
 import AppKit
+import MoneyMoneyMCP
 
 @main
+enum Main {
+    static func main() {
+        // `mmSync --mcp`: MCP server over stdio for Claude and other clients. No UI, no syncing.
+        if CommandLine.arguments.contains("--mcp") {
+            MoneyMoney.serve()
+        } else {
+            mmSyncApp.main()
+        }
+    }
+}
+
 struct mmSyncApp: App {
     @StateObject private var moneyMoneyManager: MoneyMoneyManager = MoneyMoneyManager()
     

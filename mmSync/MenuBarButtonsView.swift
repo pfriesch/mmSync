@@ -68,6 +68,15 @@ struct MenuBarButtonsView: View {
                 }
 
                 Button {
+                    // Claude starts this same binary with --mcp; see Main in mmSyncApp.swift.
+                    let command = "claude mcp add moneymoney -- \"\(Bundle.main.executablePath ?? "")\" --mcp"
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(command, forType: .string)
+                } label: {
+                    Label("Copy Claude Setup Command", systemImage: "doc.on.clipboard")
+                }
+
+                Button {
                     SettingsWindow.shared.show(manager: manager)
                 } label: {
                     Label("Settings…", systemImage: "gear")
