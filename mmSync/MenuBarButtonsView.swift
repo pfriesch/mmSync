@@ -67,8 +67,10 @@ struct MenuBarButtonsView: View {
                     Label("Show Backups", systemImage: "folder")
                 }
 
-                SettingsLink {
-                    Label("Settings", systemImage: "gear")
+                Button {
+                    SettingsWindow.shared.show(manager: manager)
+                } label: {
+                    Label("Settings…", systemImage: "gear")
                 }
                 
                 Button(action: {

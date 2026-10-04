@@ -46,6 +46,7 @@ struct SyncEngineTests {
 
         try write("v2", to: b)
         #expect(try b.sync() == .pushed)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: b.backupsURL.path).count == 1) // replaced iCloud v1
         #expect(a.remoteIsNewer())
         #expect(try a.sync() == .pulled)
         #expect(try read(a) == "v2")

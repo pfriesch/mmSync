@@ -127,16 +127,17 @@ struct SyncEngine {
 
     /// Conflict resolution: replace the iCloud copy with this Mac's database (iCloud copy is backed up).
     func forcePush() throws -> SyncOutcome {
-        if fm.fileExists(atPath: remoteDatabase.path) {
-            try backup(remoteDatabase, suffix: "_icloud")
-        }
         try push()
         return .pushed
     }
 
     // MARK: - Push / pull
 
+    /// Backs up the iCloud copy it replaces, so a bad upload can be undone.
     private func push() throws {
+        if fm.fileExists(atPath: remoteDatabase.path) {
+            try backup(remoteDatabase, suffix: "_icloud")
+        }
         let tmp = remoteRoot.appending(path: "current.tmp-\(mac)")
         try? fm.removeItem(at: tmp)
         try fm.createDirectory(at: tmp, withIntermediateDirectories: true)

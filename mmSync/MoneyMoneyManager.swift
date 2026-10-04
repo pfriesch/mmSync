@@ -3,6 +3,7 @@ import OSLog
 import AppKit
 import UserNotifications
 import SwiftUI
+import ServiceManagement
 
 public enum LogLevel: String {
     case debug = "DEBUG"
@@ -97,6 +98,7 @@ public class MoneyMoneyManager: ObservableObject {
     @Published public private(set) var isICloudAvailable = false
     @Published public private(set) var hasConflict = false
     @Published public private(set) var needsFullDiskAccess = false
+    @Published public private(set) var loginItemStatus = SMAppService.mainApp.status
     @Published private(set) var logs: [LogEntry] = []
     private let maxLogEntries = 1000
 
@@ -130,6 +132,12 @@ public class MoneyMoneyManager: ObservableObject {
 
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         setupNotifications()
+
+        // Start at login (launchd-managed) so syncs happen without opening mmSync by hand.
+        if !UserDefaults.standard.bool(forKey: Config.didSetUpLoginItemKey) {
+            UserDefaults.standard.set(true, forKey: Config.didSetUpLoginItemKey)
+            setOpensAtLogin(true)
+        }
 
         // devmode: polls iCloud for other Macs' pushes; switch to NSMetadataQuery if 5 min latency hurts
         pollTimer = Timer.scheduledTimer(withTimeInterval: Config.pollInterval, repeats: true) { [weak self] _ in
@@ -251,9 +259,34 @@ public class MoneyMoneyManager: ObservableObject {
         }
     }
 
+    // MARK: - Login item
+
+    public func setOpensAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            addLog(enabled ? "Registered to open at login" : "Removed from login items")
+        } catch {
+            addLog("Failed to change login item: \(error.localizedDescription)", level: .error)
+        }
+        refreshLoginItemStatus()
+    }
+
+    /// The user can change this in System Settings → General → Login Items at any time.
+    public func refreshLoginItemStatus() {
+        loginItemStatus = SMAppService.mainApp.status
+    }
+
+    public func openLoginItemsSettings() {
+        SMAppService.openSystemSettingsLoginItems()
+    }
+
     public func showBackupsInFinder() {
-        try? FileManager.default.createDirectory(at: engine.backupsURL, withIntermediateDirectories: true)
-        NSWorkspace.shared.open(engine.backupsURL)
+        try? FileManager.default.createDirectory(at: Config.syncURL, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(Config.syncURL)
     }
 
     private func run(_ work: @escaping @Sendable (SyncEngine) throws -> SyncOutcome) async {

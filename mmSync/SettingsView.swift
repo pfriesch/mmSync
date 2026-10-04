@@ -18,6 +18,23 @@ struct SettingsView: View {
                     }
                 }
                 
+                Section("Background") {
+                    Toggle("Open at Login", isOn: Binding(
+                        get: { manager.loginItemStatus == .enabled || manager.loginItemStatus == .requiresApproval },
+                        set: { manager.setOpensAtLogin($0) }
+                    ))
+                    Text("mmSync starts when you log in and syncs whenever MoneyMoney quits.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    if manager.loginItemStatus == .requiresApproval {
+                        Text("macOS needs your approval to open mmSync at login.")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                        Button("Open Login Items Settings…") { manager.openLoginItemsSettings() }
+                    }
+                }
+                .onAppear { manager.refreshLoginItemStatus() }
+
                 Section("MoneyMoney Data") {
                     let url = Config.moneyMoneyDataURL
                     let found = Config.isMoneyMoneyDataDirectory(url)

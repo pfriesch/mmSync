@@ -20,6 +20,9 @@ enum Config {
     static let syncURL = iCloudDriveURL.appending(path: "Backups/MoneyMoney")
     static let stateURL = home.appending(path: "Library/Application Support/mmSync")
 
+    /// Set once mmSync has registered itself as a login item, so turning it off in Settings sticks.
+    static let didSetUpLoginItemKey = "didSetUpLoginItem"
+
     static let pollInterval: TimeInterval = 5 * 60
     static let maxLocalBackups = 3
 

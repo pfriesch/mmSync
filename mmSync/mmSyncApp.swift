@@ -21,11 +21,29 @@ struct mmSyncApp: App {
             MenuBarIconView(manager: moneyMoneyManager)
         }
         .environmentObject(moneyMoneyManager)
-        
-        Settings {
-            SettingsView()
-                .environmentObject(moneyMoneyManager)
+    }
+}
+
+/// SwiftUI's `Settings` scene and `SettingsLink` don't reliably open from a menu-bar-only app,
+/// so the settings window is managed directly.
+@MainActor
+final class SettingsWindow {
+    static let shared = SettingsWindow()
+    private var window: NSWindow?
+
+    func show(manager: MoneyMoneyManager) {
+        if window == nil {
+            let window = NSWindow(contentViewController: NSHostingController(
+                rootView: SettingsView().environmentObject(manager)
+            ))
+            window.title = "mmSync Settings"
+            window.styleMask = [.titled, .closable]
+            window.isReleasedWhenClosed = false
+            window.center()
+            self.window = window
         }
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
     }
 }
 
