@@ -1,9 +1,7 @@
 import Foundation
-import SwiftData
 import OSLog
 import AppKit
 import UserNotifications
-import CloudKit
 import SwiftUI
 
 public enum LogLevel: String {
@@ -11,7 +9,7 @@ public enum LogLevel: String {
     case info = "INFO"
     case warning = "WARNING"
     case error = "ERROR"
-    
+
     var color: Color {
         switch self {
         case .debug: return .secondary
@@ -34,7 +32,7 @@ public enum SyncStatus: Equatable {
     case syncing
     case success(String)
     case error(String)
-    
+
     var icon: String {
         switch self {
         case .idle:
@@ -47,7 +45,7 @@ public enum SyncStatus: Equatable {
             return "exclamationmark.circle"
         }
     }
-    
+
     var color: Color {
         switch self {
         case .idle: return .primary
@@ -60,41 +58,29 @@ public enum SyncStatus: Equatable {
 
 public enum SyncError: LocalizedError {
     case moneyMoneyRunning
-    case lockFileExists
-    case sourceDirectoryNotFound
-    case destinationDirectoryNotFound
-    case securityScopeError(Error)
-    case fileOperationError(Error)
-    case invalidDirectoryStructure
     case iCloudNotAvailable
+    case iCloudNotReady
     case conflictDetected
     case noBackupFound
-    case staleLockFile
-    
+    case noAccess
+    case lockedBy(String, Date)
+
     public var errorDescription: String? {
         switch self {
         case .moneyMoneyRunning:
             return "MoneyMoney is currently running. Please close it before syncing."
-        case .lockFileExists:
-            return "Another sync operation is in progress."
-        case .sourceDirectoryNotFound:
-            return "Source directory not found."
-        case .destinationDirectoryNotFound:
-            return "Destination directory not found."
-        case .securityScopeError(let error):
-            return "Failed to access required directories: \(error.localizedDescription)"
-        case .fileOperationError(let error):
-            return "File operation failed: \(error.localizedDescription)"
-        case .invalidDirectoryStructure:
-            return "Invalid directory structure in MoneyMoney directory."
         case .iCloudNotAvailable:
-            return "iCloud is not available. Please sign in to iCloud to use mmSync."
+            return "iCloud Drive is not available. Please sign in to iCloud to use mmSync."
+        case .iCloudNotReady:
+            return "iCloud is still downloading the latest database. Will retry."
         case .conflictDetected:
-            return "A conflict was detected between local and iCloud data. Please resolve manually."
+            return "This Mac and iCloud both have changes. Choose which version to keep."
         case .noBackupFound:
-            return "No backup found to sync from or to iCloud."
-        case .staleLockFile:
-            return "Lock file is stale. Please check if MoneyMoney is running properly."
+            return "No database found in iCloud."
+        case .noAccess:
+            return "mmSync can't read MoneyMoney's data. Grant Full Disk Access in System Settings."
+        case .lockedBy(let mac, let date):
+            return "MoneyMoney is open on \(mac) (since \(date.formatted(date: .abbreviated, time: .shortened)))."
         }
     }
 }
@@ -102,31 +88,26 @@ public enum SyncError: LocalizedError {
 @MainActor
 public class MoneyMoneyManager: ObservableObject {
     private let logger = Logger(subsystem: "com.piofresco.mmsync", category: "MoneyMoneyManager")
-    private let fileManager = FileManager.default
-    private let maxBackups = 3
-    private let modelContainer: ModelContainer
-    private let modelContext: ModelContext
-    private let iCloudBackupURL: URL
-    private let moneyMoneyURL: URL
-    
+    private let engine: SyncEngine
+    private var pollTimer: Timer?
+
     @Published public private(set) var syncStatus: SyncStatus = .idle
     @Published public private(set) var isSyncing = false
     @Published public private(set) var lastSyncTime: Date?
     @Published public private(set) var isICloudAvailable = false
+    @Published public private(set) var hasConflict = false
+    @Published public private(set) var needsFullDiskAccess = false
     @Published private(set) var logs: [LogEntry] = []
     private let maxLogEntries = 1000
-    
-    private let staleLockTimeout: TimeInterval = 4 * 60 * 60 // 4 hours
-    private var lockFileMonitor: Timer?
-    
+
     var syncStatusIcon: String {
         syncStatus.icon
     }
-    
+
     var syncStatusColor: Color {
         syncStatus.color
     }
-    
+
     var syncStatusText: String {
         switch syncStatus {
         case .idle:
@@ -134,260 +115,198 @@ public class MoneyMoneyManager: ObservableObject {
         case .syncing:
             return "Syncing..."
         case .success(let message):
-            return "Success: \(message)"
+            return message
         case .error(let message):
             return "Error: \(message)"
         }
     }
-    
+
     public init() {
-        // Initialize SwiftData
-        let schema = Schema([SyncState.self])
-        let modelConfiguration = ModelConfiguration(schema: schema)
-        
-        do {
-            modelContainer = try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            logger.error("Failed to initialize SwiftData: \(error.localizedDescription)")
-            modelContainer = try! ModelContainer(for: schema, configurations: [ModelConfiguration(isStoredInMemoryOnly: true)])
-        }
-        
-        // Initialize URLs
-        let iCloudURL = fileManager.url(forUbiquityContainerIdentifier: nil)?.appendingPathComponent("Backups/MoneyMoney")
-        self.iCloudBackupURL = iCloudURL ?? URL(fileURLWithPath: Config.iCloudBackupPath)
-        
-        let homeURL = fileManager.homeDirectoryForCurrentUser
-        self.moneyMoneyURL = homeURL.appendingPathComponent("Library/Containers/com.moneymoney-app.retail/Data/Library/Application Support")
-        
-        // Initialize model context
-        self.modelContext = modelContainer.mainContext
-        
+        engine = SyncEngine(
+            localDatabase: Config.moneyMoneyDataURL.appending(path: "Database"),
+            remoteRoot: Config.syncURL,
+            stateDirectory: Config.stateURL,
+            mac: Host.current().localizedName ?? "Unknown",
+            moneyMoneyVersion: Self.moneyMoneyVersion(),
+            maxLocalBackups: Config.maxLocalBackups
+        )
+        lastSyncTime = engine.lastSynced()?.date
+
+        // Unit tests run inside this app; never touch real data from them.
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         setupNotifications()
-        
-        Task {
-            await checkICloudAvailability()
-            await startMonitoring()
+
+        // devmode: polls iCloud for other Macs' pushes; switch to NSMetadataQuery if 5 min latency hurts
+        pollTimer = Timer.scheduledTimer(withTimeInterval: Config.pollInterval, repeats: true) { [weak self] _ in
+            Task { await self?.syncIfMoneyMoneyClosed() }
         }
+
+        Task { await syncIfMoneyMoneyClosed() }
     }
-    
+
     private func setupNotifications() {
-        NotificationCenter.default.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task {
-                await self?.checkICloudAvailability()
+                await self?.syncIfMoneyMoneyClosed()
             }
         }
-        
-        NotificationCenter.default.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] notification in
-            if let bundleIdentifier = notification.userInfo?["NSApplicationBundleIdentifier"] as? String,
-               bundleIdentifier == "com.moneymoney-app.retail" {
+
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] notification in
+            if (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier == Config.moneyMoneyBundleId {
                 Task {
                     await self?.handleMoneyMoneyLaunch()
                 }
             }
         }
-        
-        NotificationCenter.default.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] notification in
-            if let bundleIdentifier = notification.userInfo?["NSApplicationBundleIdentifier"] as? String,
-               bundleIdentifier == "com.moneymoney-app.retail" {
+
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] notification in
+            if (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier == Config.moneyMoneyBundleId {
                 Task {
-                    await self?.handleMoneyMoneyTermination()
+                    await self?.startSync()
                 }
             }
         }
     }
-    
+
     private func addLog(_ message: String, level: LogLevel = .info) {
-        let entry = LogEntry(timestamp: Date(), level: level, message: message)
-        DispatchQueue.main.async {
-            self.logs.insert(entry, at: 0)
-            if self.logs.count > self.maxLogEntries {
-                self.logs.removeLast()
-            }
+        logger.log("\(message, privacy: .public)")
+        logs.insert(LogEntry(timestamp: Date(), level: level, message: message), at: 0)
+        if logs.count > maxLogEntries {
+            logs.removeLast()
         }
     }
-    
+
     private func sendNotification(title: String, body: String) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
-        
+
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
-        
-        addLog("\(title): \(body)", level: title.contains("Error") ? .error : .info)
     }
-    
-    public func checkICloudAvailability() async {
-        let fileManager = FileManager.default
-        let iCloudURL = fileManager.url(forUbiquityContainerIdentifier: nil)?.appendingPathComponent("Backups/MoneyMoney")
-        
-        DispatchQueue.main.async {
-            if let iCloudURL = iCloudURL {
-                do {
-                    try fileManager.createDirectory(at: iCloudURL, withIntermediateDirectories: true)
-                    self.isICloudAvailable = true
-                } catch {
-                    self.logger.error("Failed to create iCloud directory: \(error.localizedDescription)")
-                    self.isICloudAvailable = false
-                    self.sendNotification(
-                        title: "iCloud Error",
-                        body: "Failed to access iCloud. Please check your iCloud settings."
-                    )
-                }
-            } else {
-                self.isICloudAvailable = false
-                self.sendNotification(
-                    title: "iCloud Error",
-                    body: "iCloud is not available. Please sign in to iCloud to use mmSync."
-                )
-            }
-        }
+
+    private func checkICloudAvailability() {
+        isICloudAvailable = FileManager.default.fileExists(atPath: Config.iCloudDriveURL.path)
     }
-    
+
+    // MARK: - MoneyMoney lifecycle
+
     private func handleMoneyMoneyLaunch() async {
-        // Create lock file when MoneyMoney launches
-        let lockFileURL = createLockFileURL()
+        checkICloudAvailability()
+        guard isICloudAvailable else { return }
         do {
-            try "".write(to: lockFileURL, atomically: true, encoding: .utf8)
-            addLog("Created lock file for MoneyMoney launch", level: .info)
+            if let other = try engine.acquireLock() {
+                let message = "MoneyMoney is also open on \(other.mac). Changes on both Macs will conflict."
+                addLog(message, level: .warning)
+                sendNotification(title: "MoneyMoney open elsewhere", body: message)
+            } else if engine.remoteIsNewer() {
+                let message = "iCloud has newer data. Quit MoneyMoney and let mmSync update before making changes."
+                addLog(message, level: .warning)
+                sendNotification(title: "Newer data in iCloud", body: message)
+            } else {
+                addLog("MoneyMoney opened, lock taken")
+            }
         } catch {
-            addLog("Failed to create lock file: \(error.localizedDescription)", level: .error)
+            addLog("Failed to write lock: \(error.localizedDescription)", level: .error)
         }
     }
-    
-    private func handleMoneyMoneyTermination() async {
-        // Remove lock file and start sync when MoneyMoney terminates
-        let lockFileURL = createLockFileURL()
-        do {
-            try fileManager.removeItem(at: lockFileURL)
-            addLog("Removed lock file after MoneyMoney termination", level: .info)
+
+    private func syncIfMoneyMoneyClosed() async {
+        if isMoneyMoneyRunning() {
+            // Keep the lock held, e.g. after mmSync restarted while MoneyMoney was open.
+            checkICloudAvailability()
+            if isICloudAvailable {
+                try? engine.acquireLock()
+            }
+        } else {
             await startSync()
-        } catch {
-            addLog("Failed to remove lock file: \(error.localizedDescription)", level: .error)
         }
     }
-    
-    private func createLockFileURL() -> URL {
-        let computerName = Host.current().localizedName ?? "Unknown"
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd_HHmm"
-        let timestamp = dateFormatter.string(from: Date())
-        return iCloudBackupURL.appendingPathComponent("\(timestamp)_\(computerName).mmSyncLockFile")
-    }
-    
-    private func createBackupURL() -> URL {
-        let computerName = Host.current().localizedName ?? "Unknown"
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd_HHmm"
-        let timestamp = dateFormatter.string(from: Date())
-        return iCloudBackupURL.appendingPathComponent("\(timestamp)_\(computerName)")
-    }
-    
+
+    // MARK: - Sync
+
     public func startSync() async {
+        await run { try $0.sync() }
+    }
+
+    /// Conflict resolution: keep the iCloud version, back up this Mac's database.
+    public func useICloudVersion() async {
+        await run { try $0.forcePull() }
+    }
+
+    /// Conflict resolution: keep this Mac's version, back up the iCloud database.
+    public func useThisMacsVersion() async {
+        await run { try $0.forcePush() }
+    }
+
+    public func openFullDiskAccessSettings() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!)
+    }
+
+    public func showBackupsInFinder() {
+        try? FileManager.default.createDirectory(at: engine.backupsURL, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(engine.backupsURL)
+    }
+
+    private func run(_ work: @escaping @Sendable (SyncEngine) throws -> SyncOutcome) async {
         guard !isSyncing else { return }
-        
+        checkICloudAvailability()
+        guard isICloudAvailable else { return fail(SyncError.iCloudNotAvailable) }
+        guard !isMoneyMoneyRunning() else { return fail(SyncError.moneyMoneyRunning) }
+
         isSyncing = true
         syncStatus = .syncing
-        addLog("Starting sync process", level: .info)
-        
+        defer { isSyncing = false }
+
+        let engine = self.engine
         do {
-            try await performSync()
-            syncStatus = .success("Sync completed successfully")
-            lastSyncTime = Date()
-            addLog("Sync completed successfully", level: .info)
-            sendNotification(title: "Sync Complete", body: "Your MoneyMoney data has been synced successfully.")
+            let outcome = try await Task.detached { try work(engine) }.value
+            engine.releaseLock()
+            hasConflict = false
+            needsFullDiskAccess = false
+            lastSyncTime = engine.lastSynced()?.date
+
+            switch outcome {
+            case .upToDate:
+                syncStatus = .success("Up to date")
+            case .pushed:
+                syncStatus = .success("Uploaded to iCloud")
+                addLog("Uploaded database to iCloud")
+                sendNotification(title: Config.notificationTitle, body: "MoneyMoney data uploaded to iCloud.")
+            case .pulled:
+                syncStatus = .success("Updated from iCloud")
+                addLog("Replaced local database with iCloud version")
+                sendNotification(title: Config.notificationTitle, body: "MoneyMoney data updated from iCloud.")
+            }
         } catch {
-            let errorMessage = error.localizedDescription
-            syncStatus = .error(errorMessage)
-            addLog("Sync failed: \(errorMessage)", level: .error)
-            sendNotification(title: "Sync Error", body: errorMessage)
-        }
-        
-        isSyncing = false
-    }
-    
-    private func performSync() async throws {
-        // Check if MoneyMoney is running
-        if isMoneyMoneyRunning() {
-            throw SyncError.moneyMoneyRunning
-        }
-        
-        // Check for lock file
-        let lockFileURL = createLockFileURL()
-        if fileManager.fileExists(atPath: lockFileURL.path) {
-            // Check if lock file is stale
-            if let attributes = try? fileManager.attributesOfItem(atPath: lockFileURL.path),
-               let creationDate = attributes[.creationDate] as? Date,
-               Date().timeIntervalSince(creationDate) > staleLockTimeout {
-                throw SyncError.staleLockFile
-            }
-            throw SyncError.lockFileExists
-        }
-        
-        // Check iCloud availability
-        guard isICloudAvailable else {
-            throw SyncError.iCloudNotAvailable
-        }
-        
-        // Perform sync
-        let backupURL = createBackupURL()
-        try await syncToICloud(backupURL: backupURL)
-        
-        // Clean up old backups
-        try await cleanupOldBackups()
-    }
-    
-    private func syncToICloud(backupURL: URL) async throws {
-        // Create backup directory
-        try fileManager.createDirectory(at: backupURL, withIntermediateDirectories: true)
-        
-        // Copy MoneyMoney data to backup
-        try fileManager.copyItem(at: moneyMoneyURL, to: backupURL.appendingPathComponent("MoneyMoney"))
-        
-        // Update sync state
-        let syncState = SyncState(lastSyncTime: Date(), lastBackupURL: backupURL.path)
-        modelContext.insert(syncState)
-        try modelContext.save()
-    }
-    
-    private func cleanupOldBackups() async throws {
-        let backupURLs = try fileManager.contentsOfDirectory(at: iCloudBackupURL, includingPropertiesForKeys: [.creationDateKey])
-            .filter { $0.pathExtension != "mmSyncLockFile" }
-            .sorted { url1, url2 in
-                let date1 = try fileManager.attributesOfItem(atPath: url1.path)[.creationDate] as? Date ?? Date.distantPast
-                let date2 = try fileManager.attributesOfItem(atPath: url2.path)[.creationDate] as? Date ?? Date.distantPast
-                return date1 > date2
-            }
-        
-        // Keep only the last 3 backups per computer
-        let computerName = Host.current().localizedName ?? "Unknown"
-        let computerBackups = backupURLs.filter { $0.lastPathComponent.contains(computerName) }
-        
-        if computerBackups.count > maxBackups {
-            for backupURL in computerBackups[maxBackups...] {
-                try fileManager.removeItem(at: backupURL)
-                addLog("Removed old backup: \(backupURL.lastPathComponent)", level: .info)
-            }
+            fail(error)
         }
     }
-    
+
+    private func fail(_ error: Error) {
+        let message = error.localizedDescription
+        if case .conflictDetected = error as? SyncError { hasConflict = true }
+        if case .noAccess = error as? SyncError { needsFullDiskAccess = true }
+
+        // The poll timer retries every few minutes; only notify when the problem changes.
+        if syncStatus != .error(message) {
+            addLog("Sync failed: \(message)", level: .error)
+            sendNotification(title: "Sync Error", body: message)
+        }
+        syncStatus = .error(message)
+    }
+
     private func isMoneyMoneyRunning() -> Bool {
-        let runningApps = NSWorkspace.shared.runningApplications
-        return runningApps.contains { $0.bundleIdentifier == "com.moneymoney-app.retail" }
-    }
-    
-    private func startMonitoring() async {
-        // Start monitoring iCloud backup folder for changes
-        let backupFolderURL = iCloudBackupURL
-        
-        do {
-            let resourceValues = try backupFolderURL.resourceValues(forKeys: [.contentModificationDateKey])
-            if let modificationDate = resourceValues.contentModificationDate {
-                addLog("Last backup folder modification: \(modificationDate)", level: .debug)
-            }
-        } catch {
-            addLog("Failed to get backup folder modification date: \(error.localizedDescription)", level: .error)
+        NSWorkspace.shared.runningApplications.contains {
+            $0.bundleIdentifier == Config.moneyMoneyBundleId && !$0.isTerminated
         }
     }
-} 
+
+    private static func moneyMoneyVersion() -> String? {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: Config.moneyMoneyBundleId)
+            .flatMap { Bundle(url: $0)?.infoDictionary?["CFBundleShortVersionString"] as? String }
+    }
+}

@@ -36,7 +36,37 @@ struct MenuBarButtonsView: View {
                     Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .disabled(manager.isSyncing)
-                
+
+                if manager.hasConflict {
+                    Button {
+                        Task { await manager.useICloudVersion() }
+                    } label: {
+                        Label("Use iCloud Version", systemImage: "icloud.and.arrow.down")
+                    }
+                    .disabled(manager.isSyncing)
+
+                    Button {
+                        Task { await manager.useThisMacsVersion() }
+                    } label: {
+                        Label("Use This Mac's Version", systemImage: "icloud.and.arrow.up")
+                    }
+                    .disabled(manager.isSyncing)
+                }
+
+                if manager.needsFullDiskAccess {
+                    Button {
+                        manager.openFullDiskAccessSettings()
+                    } label: {
+                        Label("Grant Full Disk Access…", systemImage: "lock.open")
+                    }
+                }
+
+                Button {
+                    manager.showBackupsInFinder()
+                } label: {
+                    Label("Show Backups", systemImage: "folder")
+                }
+
                 SettingsLink {
                     Label("Settings", systemImage: "gear")
                 }
