@@ -88,7 +88,7 @@ public enum SyncError: LocalizedError {
 @MainActor
 public class MoneyMoneyManager: ObservableObject {
     private let logger = Logger(subsystem: "com.piofresco.mmsync", category: "MoneyMoneyManager")
-    private let engine: SyncEngine
+    private var engine: SyncEngine
     private var pollTimer: Timer?
 
     @Published public private(set) var syncStatus: SyncStatus = .idle
@@ -122,14 +122,7 @@ public class MoneyMoneyManager: ObservableObject {
     }
 
     public init() {
-        engine = SyncEngine(
-            localDatabase: Config.moneyMoneyDataURL.appending(path: "Database"),
-            remoteRoot: Config.syncURL,
-            stateDirectory: Config.stateURL,
-            mac: Host.current().localizedName ?? "Unknown",
-            moneyMoneyVersion: Self.moneyMoneyVersion(),
-            maxLocalBackups: Config.maxLocalBackups
-        )
+        engine = Self.makeEngine()
         lastSyncTime = engine.lastSynced()?.date
 
         // Unit tests run inside this app; never touch real data from them.
@@ -246,6 +239,18 @@ public class MoneyMoneyManager: ObservableObject {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!)
     }
 
+    private func promptForFullDiskAccess() {
+        let alert = NSAlert()
+        alert.messageText = "mmSync needs Full Disk Access"
+        alert.informativeText = "macOS blocks access to MoneyMoney's data. Add mmSync under Privacy & Security → Full Disk Access, then restart mmSync."
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Later")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            openFullDiskAccessSettings()
+        }
+    }
+
     public func showBackupsInFinder() {
         try? FileManager.default.createDirectory(at: engine.backupsURL, withIntermediateDirectories: true)
         NSWorkspace.shared.open(engine.backupsURL)
@@ -289,7 +294,11 @@ public class MoneyMoneyManager: ObservableObject {
     private func fail(_ error: Error) {
         let message = error.localizedDescription
         if case .conflictDetected = error as? SyncError { hasConflict = true }
-        if case .noAccess = error as? SyncError { needsFullDiskAccess = true }
+        if case .noAccess = error as? SyncError {
+            // Once per occurrence; the flag resets after the next successful sync.
+            if !needsFullDiskAccess { promptForFullDiskAccess() }
+            needsFullDiskAccess = true
+        }
 
         // The poll timer retries every few minutes; only notify when the problem changes.
         if syncStatus != .error(message) {
@@ -303,6 +312,25 @@ public class MoneyMoneyManager: ObservableObject {
         NSWorkspace.shared.runningApplications.contains {
             $0.bundleIdentifier == Config.moneyMoneyBundleId && !$0.isTerminated
         }
+    }
+
+    /// nil resets to the default location.
+    public func setMoneyMoneyDataURL(_ url: URL?) {
+        guard !isSyncing else { return }
+        UserDefaults.standard.set(url, forKey: Config.moneyMoneyDataURLKey)
+        engine = Self.makeEngine()
+        addLog("MoneyMoney data folder: \(Config.moneyMoneyDataURL.path)")
+    }
+
+    private static func makeEngine() -> SyncEngine {
+        SyncEngine(
+            localDatabase: Config.moneyMoneyDataURL.appending(path: "Database"),
+            remoteRoot: Config.syncURL,
+            stateDirectory: Config.stateURL,
+            mac: Host.current().localizedName ?? "Unknown",
+            moneyMoneyVersion: moneyMoneyVersion(),
+            maxLocalBackups: Config.maxLocalBackups
+        )
     }
 
     private static func moneyMoneyVersion() -> String? {

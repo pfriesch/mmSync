@@ -3,6 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var manager: MoneyMoneyManager
     @State private var selectedTab = 0
+    @State private var isPickingFolder = false
+    @State private var folderError: String?
     
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -16,6 +18,42 @@ struct SettingsView: View {
                     }
                 }
                 
+                Section("MoneyMoney Data") {
+                    let url = Config.moneyMoneyDataURL
+                    let found = Config.isMoneyMoneyDataDirectory(url)
+                    HStack {
+                        Image(systemName: found ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .foregroundColor(found ? .green : .red)
+                        Text(found ? "Database found" : "Database not found (or no Full Disk Access)")
+                    }
+                    Text(url.path)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+                    if let folderError {
+                        Text(folderError).font(.caption).foregroundColor(.red)
+                    }
+                    HStack {
+                        Button("Choose Folder…") { isPickingFolder = true }
+                        if url != Config.defaultMoneyMoneyDataURL {
+                            Button("Use Default") {
+                                folderError = nil
+                                manager.setMoneyMoneyDataURL(nil)
+                            }
+                        }
+                    }
+                    .disabled(manager.isSyncing)
+                }
+                .fileImporter(isPresented: $isPickingFolder, allowedContentTypes: [.folder]) { result in
+                    guard case .success(let url) = result else { return }
+                    if Config.isMoneyMoneyDataDirectory(url) {
+                        folderError = nil
+                        manager.setMoneyMoneyDataURL(url)
+                    } else {
+                        folderError = "No Database/MoneyMoney.sqlite in \(url.lastPathComponent)"
+                    }
+                }
+
                 Section("Sync Status") {
                     HStack {
                         Image(systemName: manager.syncStatus.icon)

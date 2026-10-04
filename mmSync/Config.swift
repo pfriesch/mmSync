@@ -6,7 +6,16 @@ enum Config {
     private static let home = FileManager.default.homeDirectoryForCurrentUser
 
     /// MoneyMoney → Help → Show Database in Finder
-    static let moneyMoneyDataURL = home.appending(path: "Library/Containers/com.moneymoney-app.retail/Data/Library/Application Support/MoneyMoney")
+    static let defaultMoneyMoneyDataURL = home.appending(path: "Library/Containers/com.moneymoney-app.retail/Data/Library/Application Support/MoneyMoney")
+    static let moneyMoneyDataURLKey = "moneyMoneyDataURL"
+    /// User-chosen folder from Settings, else the default location.
+    static var moneyMoneyDataURL: URL {
+        UserDefaults.standard.url(forKey: moneyMoneyDataURLKey) ?? defaultMoneyMoneyDataURL
+    }
+
+    static func isMoneyMoneyDataDirectory(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.appending(path: "Database/MoneyMoney.sqlite").path)
+    }
     static let iCloudDriveURL = home.appending(path: "Library/Mobile Documents/com~apple~CloudDocs")
     static let syncURL = iCloudDriveURL.appending(path: "Backups/MoneyMoney")
     static let stateURL = home.appending(path: "Library/Application Support/mmSync")
